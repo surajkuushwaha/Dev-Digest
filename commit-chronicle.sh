@@ -11,6 +11,13 @@ set -e
 setopt KSH_ARRAYS  # Use 0-based array indexing like bash
 setopt POSIX_ARGZERO  # Set $0 to script name like bash
 
+# ==========================================
+# ⚙️ DEFAULT CONFIGURATION
+# ==========================================
+# Set your default values here to skip interactive prompts
+DEFAULT_AUTHOR="Suraj Kushwaha"
+DEFAULT_GITHUB_USERNAME="cx-suraj"
+
 # Detect operating system
 detect_os() {
     case "$(uname -s)" in
@@ -75,13 +82,13 @@ echo -n "📅 Enter month (YYYY-MM) [$(date +"%Y-%m")]: "
 read MONTH_INPUT
 MONTH=${MONTH_INPUT:-$(date +"%Y-%m")}
 
-echo -n "👤 Enter your full name [Ashish Patel]: "
+echo -n "👤 Enter your full name [$DEFAULT_AUTHOR]: "
 read AUTHOR_INPUT
-AUTHOR=${AUTHOR_INPUT:-"Ashish Patel"}
+AUTHOR=${AUTHOR_INPUT:-"$DEFAULT_AUTHOR"}
 
-echo -n "🐙 Enter GitHub username [ashishxcode]: "
+echo -n "🐙 Enter GitHub username [$DEFAULT_GITHUB_USERNAME]: "
 read GITHUB_USERNAME_INPUT
-GITHUB_USERNAME=${GITHUB_USERNAME_INPUT:-"ashishxcode"}
+GITHUB_USERNAME=${GITHUB_USERNAME_INPUT:-"$DEFAULT_GITHUB_USERNAME"}
 
 # Create comprehensive author patterns for git log matching
 # This handles various name/email combinations and case variations
@@ -195,22 +202,14 @@ for repo in "${REPO_PATHS[@]}"; do
 done
 echo "----------------------------------------"
 
-# Output markdown file - create in Downloads directory (cross-platform)
-get_downloads_dir() {
-    case "$OS_TYPE" in
-        "windows")
-            # Windows: Use USERPROFILE/Downloads
-            if [ -n "$USERPROFILE" ]; then
-                echo "$USERPROFILE/Downloads"
-            else
-                echo "."
-            fi
-            ;;
-        *)
-            # Linux/macOS: Use HOME/Downloads
-            echo "$HOME/Downloads"
-            ;;
-    esac
+# Output markdown file - create in project repository with year/month structure
+get_script_dir() {
+    local script_path="$0"
+    if [ "$OS_TYPE" = "windows" ]; then
+        dirname "$(readlink -f "$script_path" 2>/dev/null || echo "$script_path")"
+    else
+        dirname "$(readlink -f "$script_path" 2>/dev/null || echo "$script_path")"
+    fi
 }
 
 # Sanitize filename components
@@ -220,26 +219,27 @@ sanitize_filename() {
     echo "$input" | sed 's/[<>:"|?*\\\/[:cntrl:]]\+/_/g' | sed 's/__*/_/g' | sed 's/^_\|_$//g'
 }
 
-DOWNLOADS_DIR=$(get_downloads_dir)
-# Test write permission and create directory with fallback
-if ! mkdir -p "$DOWNLOADS_DIR" 2>/dev/null; then
-    echo "⚠️  Cannot create Downloads directory, using current directory"
-    DOWNLOADS_DIR="."
-elif ! touch "$DOWNLOADS_DIR/.test_write" 2>/dev/null; then
-    echo "⚠️  No write permission to Downloads directory, using current directory"
-    DOWNLOADS_DIR="."
+# Get the directory where the script is located
+SCRIPT_DIR=$(get_script_dir)
+
+# Create year/month directory structure
+REPORT_DIR="$SCRIPT_DIR/$YEAR/$START_DATE-$END_DATE"
+if ! mkdir -p "$REPORT_DIR" 2>/dev/null; then
+    echo "⚠️  Cannot create report directory, using current directory"
+    REPORT_DIR="."
+elif ! touch "$REPORT_DIR/.test_write" 2>/dev/null; then
+    echo "⚠️  No write permission to report directory, using current directory"
+    REPORT_DIR="."
 else
-    rm -f "$DOWNLOADS_DIR/.test_write" 2>/dev/null
+    rm -f "$REPORT_DIR/.test_write" 2>/dev/null
 fi
 
 # Sanitize filename components and create report path
-CLEAN_MONTH=$(sanitize_filename "$MONTH_NAME")
-CLEAN_YEAR=$(sanitize_filename "$YEAR")
 CLEAN_USERNAME=$(sanitize_filename "$GITHUB_USERNAME")
-REPORT_FILENAME="${CLEAN_MONTH}_${CLEAN_YEAR}_${CLEAN_USERNAME}_report.md"
+REPORT_FILENAME="${CLEAN_USERNAME}_report.md"
 
 # Handle existing file with backup
-REPORT_FILE="$DOWNLOADS_DIR/$REPORT_FILENAME"
+REPORT_FILE="$REPORT_DIR/$REPORT_FILENAME"
 if [ -f "$REPORT_FILE" ]; then
     BACKUP_FILE="$REPORT_FILE.backup.$(date +%s)"
     cp "$REPORT_FILE" "$BACKUP_FILE" 2>/dev/null && echo "📋 Existing report backed up to: $BACKUP_FILE"
