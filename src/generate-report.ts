@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 import * as dotenv from 'dotenv';
-import { execSync } from 'child_process';
+import { generateCommitChronicle } from './commit-chronicle';
 
 // Load environment variables
 dotenv.config();
@@ -21,7 +21,8 @@ interface UserInputs {
   month: string;
   author: string;
   githubUsername: string;
-  provider: 'anthropic' | 'openai';
+  generateAIReport: boolean;
+  provider?: 'anthropic' | 'openai';
 }
 
 async function promptUser(question: string, defaultValue: string): Promise<string> {
@@ -48,26 +49,40 @@ async function collectUserInputs(): Promise<UserInputs> {
   const month = await promptUser('📅 Enter month (YYYY-MM)', defaultMonth);
   const author = await promptUser('👤 Enter your full name', DEFAULT_AUTHOR);
   const githubUsername = await promptUser('🐙 Enter GitHub username', DEFAULT_GITHUB_USERNAME);
-  const provider = await promptUser('🤖 Choose AI provider (openai/anthropic)', DEFAULT_PROVIDER) as 'anthropic' | 'openai';
+
+  // Ask if user wants AI report
+  const generateAIReportAnswer = await promptUser('🤖 Generate AI-enhanced report? (yes/no)', 'yes');
+  const generateAIReport = generateAIReportAnswer.toLowerCase() === 'yes' || generateAIReportAnswer.toLowerCase() === 'y';
+
+  let provider: 'anthropic' | 'openai' | undefined;
+
+  if (generateAIReport) {
+    provider = await promptUser('🤖 Choose AI provider (openai/anthropic)', DEFAULT_PROVIDER) as 'anthropic' | 'openai';
+
+    // Validate provider
+    if (provider !== 'anthropic' && provider !== 'openai') {
+      throw new Error('❌ Invalid provider. Choose either "anthropic" or "openai"');
+    }
+  }
 
   // Validate month format
   if (!/^\d{4}-\d{2}$/.test(month)) {
     throw new Error('❌ Invalid month format. Use YYYY-MM (e.g., 2025-07)');
   }
 
-  // Validate provider
-  if (provider !== 'anthropic' && provider !== 'openai') {
-    throw new Error('❌ Invalid provider. Choose either "anthropic" or "openai"');
-  }
-
   console.log('\n📊 Generating report for:');
   console.log(`   Month: ${month}`);
   console.log(`   Author: ${author}`);
   console.log(`   GitHub: ${githubUsername}`);
-  console.log(`   Provider: ${provider}`);
+  if (generateAIReport) {
+    console.log(`   AI Report: Yes`);
+    console.log(`   Provider: ${provider}`);
+  } else {
+    console.log(`   AI Report: No`);
+  }
   console.log('----------------------------------------\n');
 
-  return { month, author, githubUsername, provider };
+  return { month, author, githubUsername, generateAIReport, provider };
 }
 
 async function generateReport(commitData: string, provider: 'anthropic' | 'openai') {
@@ -109,43 +124,22 @@ async function generateReport(commitData: string, provider: 'anthropic' | 'opena
 }
 
 async function runCommitChronicle(userInputs: UserInputs): Promise<string> {
-  console.log('🔄 Running commit-chronicle.sh to fetch commits...\n');
-
-  const scriptPath = path.join(process.cwd(), 'commit-chronicle.sh');
-
-  if (!fs.existsSync(scriptPath)) {
-    throw new Error(`commit-chronicle.sh not found at: ${scriptPath}`);
-  }
-
-  // Prepare the input for the script (simulate user input)
-  const input = `${userInputs.month}\n${userInputs.author}\n${userInputs.githubUsername}\n`;
+  console.log('🔄 Running commit-chronicle to fetch commits...\n');
 
   try {
-    // Run the script with input piped in
-    execSync(`echo "${input}" | zsh "${scriptPath}"`, {
-      stdio: 'inherit',
-      cwd: process.cwd(),
+    // Use the JavaScript version of commit-chronicle
+    const result = generateCommitChronicle({
+      month: userInputs.month,
+      author: userInputs.author,
+      githubUsername: userInputs.githubUsername
     });
 
-    // Parse the month to get the date range for the report file path
-    const [year, monthNumber] = userInputs.month.split('-');
-    const startDate = `${year}-${monthNumber}-01`;
-    const endDate = `${year}-${monthNumber}-31`;
+    console.log(`\n✅ Commit chronicle generated at: ${result.reportFile}\n`);
 
-    // Construct the expected report file path
-    const reportDir = path.join(process.cwd(), year, `${startDate}-${endDate}`);
-    const reportFile = path.join(reportDir, `${userInputs.githubUsername}_report.md`);
-
-    if (!fs.existsSync(reportFile)) {
-      throw new Error(`Generated report not found at: ${reportFile}`);
-    }
-
-    console.log(`\n✅ Commit chronicle generated at: ${reportFile}\n`);
-
-    // Read and return the generated report
-    return fs.readFileSync(reportFile, 'utf-8');
+    // Return the generated report content
+    return result.reportContent;
   } catch (error) {
-    throw new Error(`Failed to run commit-chronicle.sh: ${error}`);
+    throw new Error(`Failed to run commit-chronicle: ${error}`);
   }
 }
 
@@ -179,8 +173,10 @@ async function main() {
     // Run commit-chronicle.sh to generate the raw commit report
     const commitChronicleReport = await runCommitChronicle(userInputs);
 
-    // Add metadata context to the prompt with detailed instructions
-    const contextualPrompt = `You are analyzing commits for a monthly development report. Please provide a COMPREHENSIVE and DETAILED analysis.
+    // Only generate AI report if user requested it
+    if (userInputs.generateAIReport && userInputs.provider) {
+      // Add metadata context to the prompt with detailed instructions
+      const contextualPrompt = `You are analyzing commits for a monthly development report. Please provide a COMPREHENSIVE and DETAILED analysis.
 
 **Report Metadata:**
 - Month: ${userInputs.month}
@@ -206,16 +202,20 @@ ${commitChronicleReport}
 
 Please generate a comprehensive, detailed monthly report following the structure in your system prompt. Make it thorough and insightful.`;
 
-    const aiReport = await generateReport(contextualPrompt, userInputs.provider);
+      const aiReport = await generateReport(contextualPrompt, userInputs.provider);
 
-    // Save the AI-enhanced report
-    const aiReportPath = await saveAIReport(aiReport, userInputs);
+      // Save the AI-enhanced report
+      const aiReportPath = await saveAIReport(aiReport, userInputs);
 
-    console.log('\n✅ AI-enhanced report generated successfully!\n');
-    console.log(`📄 Saved to: ${aiReportPath}\n`);
-    console.log('='.repeat(80));
-    console.log(aiReport);
-    console.log('='.repeat(80));
+      console.log('\n✅ AI-enhanced report generated successfully!\n');
+      console.log(`📄 Saved to: ${aiReportPath}\n`);
+      console.log('='.repeat(80));
+      console.log(aiReport);
+      console.log('='.repeat(80));
+    } else {
+      console.log('\n✅ Commit chronicle report generated successfully!\n');
+      console.log('📄 AI report generation skipped as per user choice.\n');
+    }
   } catch (error) {
     console.error('Error generating report:', error);
     process.exit(1);
